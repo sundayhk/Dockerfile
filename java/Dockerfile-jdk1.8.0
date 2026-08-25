@@ -4,7 +4,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     LANG="en_US.UTF-8" \
     TZ=Asia/Shanghai \
     JAVA_HOME=/usr/local/jdk \
-    PATH=/usr/local/jdk/bin:$PATH
+    PATH=/usr/local/jdk/bin:$PATH \
+    JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=75.0 -XX:MinRAMPercentage=75.0"
 
 ARG APT_MIRROR=mirrors.aliyun.com
 
@@ -22,9 +23,9 @@ RUN sed -i "s@http://deb.debian.org@http://${APT_MIRROR}@g" /etc/apt/sources.lis
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-#ADD jdk1.8.0_151.tar.gz /usr/local/
-#RUN mv /usr/local/jdk1.8.0_151 /usr/local/jdk
-COPY jdk1.8.0_151 /usr/local/jdk
+#ADD jdk1.8.0_191.tar.gz /usr/local/
+#RUN mv /usr/local/jdk1.8.0_191 /usr/local/jdk
+COPY jdk1.8.0_191 /usr/local/jdk
 
 RUN java -version
 
