@@ -1,0 +1,42 @@
+FROM eclipse-temurin:8-jdk-jammy
+
+# 基础应用配置
+ENV APP_DIR=/app \
+    LOG_DIR=/data/logs/jar \
+    APP_NAME=mall-api \
+    PORT=8007 \
+    SPRING_PROFILES_ACTIVE=demo
+	
+#  JVM 容器感知参数
+ENV JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=75.0 -XX:MinRAMPercentage=75.0"
+
+# JVM参数，启动时会自动加载，无需在ENTRYPOINT指定
+ENV JAVA_OPTS="-XX:MaxMetaspaceSize=256m \
+	-XX:+UseG1GC \
+	-XX:MaxGCPauseMillis=200 \
+	-XX:+PrintGCDetails \
+	-XX:+PrintGCDateStamps \
+	-XX:+HeapDumpOnOutOfMemoryError \
+	-Djava.security.egd=file:/dev/./urandom \
+	-Dfile.encoding=UTF-8 \
+	-XX:HeapDumpPath=${LOG_DIR}/${APP_NAME}-dumpfile.hprof \
+	-Xloggc:${LOG_DIR}/${APP_NAME}-gc.log \
+	-XX:+UseGCLogFileRotation \
+	-XX:NumberOfGCLogFiles=10 \
+	-XX:GCLogFileSize=100M"
+
+WORKDIR ${APP_DIR}
+
+RUN groupadd -g 1000 javauser && \
+    useradd -u 1000 -g javauser -s /bin/false -m javauser && \
+    mkdir -p ${APP_DIR} ${LOG_DIR} && \
+    chown -R javauser:javauser ${APP_DIR} ${LOG_DIR}
+
+COPY --chown=javauser:javauser ${APP_NAME}/target/*exec.jar ${APP_DIR}/${APP_NAME}.jar
+
+USER javauser
+
+EXPOSE ${PORT}
+	
+# 注不要换行
+ENTRYPOINT ["sh", "-c", "exec java ${JAVA_OPTS} -jar ${APP_DIR}/${APP_NAME}.jar 2>&1 | tee -a ${LOG_DIR}/${APP_NAME}-console.log"]
