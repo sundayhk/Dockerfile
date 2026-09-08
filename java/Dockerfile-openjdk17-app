@@ -1,0 +1,39 @@
+ARG BASE_IMAGE=eclipse-temurin:17-jdk-jammy
+
+FROM ${BASE_IMAGE}
+
+# 基础应用配置
+ENV LANG="en_US.UTF-8" \
+    TZ=Asia/Shanghai \
+    APP_DIR=/app \
+    LOG_DIR=/data/logs/jar \
+    APP_NAME=dingtalk-bot
+
+# JVM 容器感知与内存资源限制
+ENV  JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:InitialRAMPercentage=75.0 -XX:MaxRAMPercentage=75.0"
+
+# JVM 运行时业务与日志参数
+ENV JAVA_OPTS="-XX:MaxMetaspaceSize=256m \
+	-XX:+UseG1GC -XX:MaxGCPauseMillis=200 \
+	-XX:+HeapDumpOnOutOfMemoryError \
+	-Djava.security.egd=file:/dev/./urandom \
+	-Dfile.encoding=UTF-8 -XX:HeapDumpPath=${LOG_DIR}/${APP_NAME}-dumpfile.hprof \
+	-Xlog:gc*:file=${LOG_DIR}/${APP_NAME}-gc.log:time,uptime:filecount=5,filesize=100M"
+
+WORKDIR ${APP_DIR}
+
+RUN ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime && \
+    echo ${TZ} > /etc/timezone && \
+    groupadd -g 1001 javauser && \
+    useradd -u 1001 -g javauser -s /bin/false -m javauser && \
+    mkdir -p ${APP_DIR} ${LOG_DIR} && \
+    chown -R javauser:javauser ${APP_DIR} ${LOG_DIR}
+
+COPY --chown=javauser:javauser target/${APP_NAME}.jar ${APP_DIR}/${APP_NAME}.jar
+
+USER javauser
+
+#EXPOSE ${PORT}
+
+# 注不要换行
+ENTRYPOINT ["sh", "-c", "exec java ${JAVA_OPTS} -jar ${APP_DIR}/${APP_NAME}.jar 2>&1 | tee -a ${LOG_DIR}/${APP_NAME}-console.log"]

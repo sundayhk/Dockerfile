@@ -1,12 +1,14 @@
 FROM eclipse-temurin:8-jdk-jammy
 
 # 基础应用配置
-ENV APP_DIR=/app \
+ENV LANG="en_US.UTF-8" \
+    TZ=Asia/Shanghai \
+    APP_DIR=/app \
     LOG_DIR=/data/logs/jar \
     APP_NAME=mall-api \
-    PORT=8007 \
+    PORT=8003 \
     SPRING_PROFILES_ACTIVE=demo
-	
+
 #  JVM 容器感知参数
 ENV JAVA_TOOL_OPTIONS="-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=75.0 -XX:MinRAMPercentage=75.0"
 
@@ -27,8 +29,10 @@ ENV JAVA_OPTS="-XX:MaxMetaspaceSize=256m \
 
 WORKDIR ${APP_DIR}
 
-RUN groupadd -g 1000 javauser && \
-    useradd -u 1000 -g javauser -s /bin/false -m javauser && \
+RUN ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime && \
+    echo ${TZ} > /etc/timezone && \
+    groupadd -g 1001 javauser && \
+    useradd -u 1001 -g javauser -s /bin/false -m javauser && \
     mkdir -p ${APP_DIR} ${LOG_DIR} && \
     chown -R javauser:javauser ${APP_DIR} ${LOG_DIR}
 
