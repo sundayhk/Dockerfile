@@ -81,7 +81,9 @@ RUN set -eux; \
 # ====================================================
 FROM php:7.1.33-fpm-stretch
 
-ENV APT_MIRROR="mirrors.aliyun.com"
+ENV LANG="en_US.UTF-8" \
+    TZ=Asia/Shanghai \
+    APT_MIRROR="mirrors.aliyun.com"
 
 # 配置 Stretch 归档源
 RUN set -eux; \
@@ -91,8 +93,10 @@ RUN set -eux; \
     echo "deb-src http://${APT_MIRROR}/debian-archive/debian-security/ stretch/updates main non-free contrib" >> /etc/apt/sources.list; \
     echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until;
 
-# 创建运行所需的 www 用户和用户组
+# 配置时区及用户
 RUN set -x \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo '$TZ' > /etc/timezone \
     && getent group www || groupadd -g 1001 -r www \
     && getent passwd www || useradd -u 1001 -r -g www www
 
