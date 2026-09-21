@@ -1,0 +1,124 @@
+# ====================================================
+# 阶段 1: 编译阶段 (Builder)
+# ====================================================
+FROM php:7.1.33-fpm-stretch AS builder
+
+ENV APT_MIRROR="mirrors.aliyun.com"
+
+# 配置 Stretch 归档源
+RUN set -eux; \
+    echo "deb http://${APT_MIRROR}/debian-archive/debian/ stretch main non-free contrib" > /etc/apt/sources.list; \
+    echo "deb-src http://${APT_MIRROR}/debian-archive/debian/ stretch main non-free contrib" >> /etc/apt/sources.list; \
+    echo "deb http://${APT_MIRROR}/debian-archive/debian-security/ stretch/updates main non-free contrib" >> /etc/apt/sources.list; \
+    echo "deb-src http://${APT_MIRROR}/debian-archive/debian-security/ stretch/updates main non-free contrib" >> /etc/apt/sources.list; \
+    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until;
+
+# 安装编译所需的开发头文件与依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfreetype6-dev \
+    libjpeg62-turbo-dev \
+    libpng-dev \
+    libicu-dev \
+    libxml2-dev \
+    libssl-dev \
+    libcurl4-openssl-dev \
+    libmcrypt-dev \
+    libmhash-dev \
+    libreadline-dev \
+    zlib1g-dev \
+    zip \
+    unzip \
+    \
+    librabbitmq-dev \
+    libmagickwand-dev \
+    curl \
+    tar \
+    && rm -rf /var/lib/apt/lists/*
+
+# 配置并编译 PHP 扩展
+RUN docker-php-ext-configure gd \
+        --with-freetype-dir=/usr/include/ \
+        --with-jpeg-dir=/usr/include/ \
+        --with-png-dir=/usr/include/ \
+    && docker-php-ext-configure opcache --enable-opcache \
+    && docker-php-ext-install -j$(nproc) \
+        mcrypt \
+        intl \
+        opcache \
+        mysqli \
+        pdo_mysql \
+        bcmath \
+        shmop \
+        sysvsem \
+        curl \
+        mbstring \
+        ftp \
+        gd \
+        pcntl \
+        sockets \
+        xmlrpc \
+        zip \
+        soap \
+        gettext \
+        exif
+
+# 解压并编译 PHP 扩展
+RUN set -eux; \
+    docker-php-source extract; \
+    \
+    mkdir -p /usr/src/php/ext/redis; \
+    curl -fsSL https://pecl.php.net/get/redis-4.2.0.tgz | tar -xz -C /usr/src/php/ext/redis --strip-components=1; \
+    \
+    mkdir -p /usr/src/php/ext/amqp; \
+    curl -fsSL https://pecl.php.net/get/amqp-1.9.4.tgz | tar -xz -C /usr/src/php/ext/amqp --strip-components=1; \
+    \
+    docker-php-ext-install -j$(nproc) redis amqp; \
+    \
+    docker-php-source delete
+
+# ====================================================
+# 阶段 2: 运行时阶段 (Final Target)
+# ====================================================
+FROM php:7.1.33-fpm-stretch
+
+ENV APT_MIRROR="mirrors.aliyun.com"
+
+# 配置 Stretch 归档源
+RUN set -eux; \
+    echo "deb http://${APT_MIRROR}/debian-archive/debian/ stretch main non-free contrib" > /etc/apt/sources.list; \
+    echo "deb-src http://${APT_MIRROR}/debian-archive/debian/ stretch main non-free contrib" >> /etc/apt/sources.list; \
+    echo "deb http://${APT_MIRROR}/debian-archive/debian-security/ stretch/updates main non-free contrib" >> /etc/apt/sources.list; \
+    echo "deb-src http://${APT_MIRROR}/debian-archive/debian-security/ stretch/updates main non-free contrib" >> /etc/apt/sources.list; \
+    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until;
+
+# 创建运行所需的 www 用户和用户组
+RUN set -x \
+    && getent group www || groupadd -g 1001 -r www \
+    && getent passwd www || useradd -u 1001 -r -g www www
+
+# 仅安装 PHP 扩展运行所需的动态链接库 (运行依赖)，不再安装 *-dev 包
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libfreetype6 \
+    libjpeg62-turbo \
+    libpng16-16 \
+    libicu57 \
+    libxml2 \
+    libmcrypt4 \
+    libreadline7 \
+    zlib1g \
+    \
+    librabbitmq4 \
+    libmagickwand-6.q16-3 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 从 builder 复制编译好的扩展与配置文件
+COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
+
+# 修改 php-fpm 的运行用户为 www
+RUN sed -i "s/user = www-data/user = www/g" /usr/local/etc/php-fpm.d/www.conf \
+    && sed -i "s/group = www-data/group = www/g" /usr/local/etc/php-fpm.d/www.conf
+
+EXPOSE 9000
+
+CMD ["php-fpm"]
