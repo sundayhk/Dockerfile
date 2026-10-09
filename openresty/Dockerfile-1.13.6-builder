@@ -3,9 +3,7 @@
 # ==========================================
 FROM debian:stretch-slim AS builder
 
-LABEL maintainer="heeone233@gmail.com"
-
-ARG APT_MIRROR=mirrors.cloud.aliyuncs.com
+ARG APT_MIRROR=mirrors.ustc.edu.cn
 
 ENV RESTY_VERSION="1.13.6.2" \
     NGINX_VERSION="1.13.6" \
@@ -112,9 +110,7 @@ RUN set -eux; \
 # ==========================================
 FROM debian:stretch-slim
 
-LABEL maintainer="heeone233@gmail.com"
-
-ARG APT_MIRROR=mirrors.cloud.aliyuncs.com
+ARG APT_MIRROR=mirrors.ustc.edu.cn
 
 ENV TZ=Asia/Shanghai \
     PATH=$PATH:/usr/local/openresty/luajit/bin:/usr/local/openresty/nginx/sbin:/usr/local/openresty/bin
