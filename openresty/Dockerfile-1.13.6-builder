@@ -1,0 +1,160 @@
+# ==========================================
+# 阶段 1: 编译构建阶段 (Builder)
+# ==========================================
+FROM debian:stretch-slim AS builder
+
+LABEL maintainer="heeone233@gmail.com"
+
+ARG APT_MIRROR=mirrors.cloud.aliyuncs.com
+
+ENV RESTY_VERSION="1.13.6.2" \
+    NGINX_VERSION="1.13.6" \
+    USER=www \
+    GROUP=www
+
+ARG NGINX_CONFIG_OPTS="\
+    --user=${USER} \
+    --group=${GROUP} \
+    --with-file-aio \
+    --with-poll_module \
+    --with-http_realip_module \
+    --with-http_image_filter_module \
+    --with-http_gunzip_module \
+    --with-http_gzip_static_module \
+    --with-http_addition_module \
+    --with-http_sub_module \
+    --with-http_dav_module \
+    --with-http_flv_module \
+    --with-http_mp4_module \
+    --with-http_slice_module \
+    --with-http_random_index_module \
+    --with-http_secure_link_module \
+    --with-http_degradation_module \
+    --with-http_ssl_module \
+    --with-http_v2_module \
+    --with-http_stub_status_module \
+    --with-http_auth_request_module \
+    --with-stream \
+    --with-stream_ssl_module \
+    --with-stream_ssl_preread_module \
+    --with-stream_realip_module \
+    --with-threads \
+    --with-pcre \
+    --with-compat \
+    --error-log-path=/var/log/nginx/error.log \
+    --http-log-path=/var/log/nginx/access.log \
+    --add-module=/tmp/ngx_cache_purge \
+    --add-module=/tmp/nginx_upstream_check_module \
+    --add-module=/tmp/nginx-module-vts \
+    --add-module=/tmp/ngx_http_geoip2_module \
+"
+
+# 配置 Stretch 归档源
+RUN set -eux; \
+    echo "deb http://${APT_MIRROR}/debian-archive/debian/ stretch main non-free contrib" > /etc/apt/sources.list; \
+    echo "deb-src http://${APT_MIRROR}/debian-archive/debian/ stretch main non-free contrib" >> /etc/apt/sources.list; \
+    echo "deb http://${APT_MIRROR}/debian-archive/debian-security/ stretch/updates main non-free contrib" >> /etc/apt/sources.list; \
+    echo "deb-src http://${APT_MIRROR}/debian-archive/debian-security/ stretch/updates main non-free contrib" >> /etc/apt/sources.list; \
+    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until
+
+# 安装编译阶段依赖
+RUN set -x \
+    && apt-get update && apt-get install -y --no-install-recommends --no-install-suggests \
+    build-essential \
+    ca-certificates \
+    curl \
+    wget \
+    patch \
+    gettext-base \
+    libgd-dev \
+    libgeoip-dev \
+    libmaxminddb-dev \
+    libncurses5-dev \
+    libperl-dev \
+    libreadline-dev \
+    libxslt1-dev \
+    make \
+    perl \
+    unzip \
+    zlib1g-dev \
+    libpcre3-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 下载源码并编译安装到 /usr/local/openresty
+RUN set -eux; \
+    mkdir -p /tmp/openresty; \
+    curl -fsSL https://openresty.org/download/openresty-${RESTY_VERSION}.tar.gz | tar -xz -C /tmp/openresty --strip-components=1; \
+    \
+    mkdir -p /tmp/ngx_cache_purge; \
+    curl -fsSL https://github.com/FRiCKLE/ngx_cache_purge/archive/refs/tags/2.3.tar.gz | tar -xz -C /tmp/ngx_cache_purge --strip-components=1; \
+    \
+    mkdir -p /tmp/nginx_upstream_check_module; \
+    curl -fsSL https://github.com/yaoweibin/nginx_upstream_check_module/archive/refs/heads/master.tar.gz | tar -xz -C /tmp/nginx_upstream_check_module --strip-components=1; \
+    \
+    mkdir -p /tmp/nginx-module-vts; \
+    curl -fsSL https://github.com/vozlt/nginx-module-vts/archive/refs/heads/master.tar.gz | tar -xz -C /tmp/nginx-module-vts --strip-components=1; \
+    \
+    mkdir -p /tmp/ngx_http_geoip2_module; \
+    curl -fsSL https://github.com/leev/ngx_http_geoip2_module/archive/refs/heads/master.tar.gz | tar -xz -C /tmp/ngx_http_geoip2_module --strip-components=1; \
+    \
+    cd /tmp/openresty/bundle/nginx-${NGINX_VERSION}; \
+    patch -p1 < /tmp/nginx_upstream_check_module/check_1.12.1+.patch; \
+    \
+    cd /tmp/openresty; \
+    ./configure -j$(nproc) ${NGINX_CONFIG_OPTS}; \
+    make -j$(nproc); \
+    make install
+
+
+# ==========================================
+# 阶段 2: 最终运行阶段 (Production Image)
+# ==========================================
+FROM debian:stretch-slim
+
+LABEL maintainer="heeone233@gmail.com"
+
+ARG APT_MIRROR=mirrors.cloud.aliyuncs.com
+
+ENV TZ=Asia/Shanghai \
+    PATH=$PATH:/usr/local/openresty/luajit/bin:/usr/local/openresty/nginx/sbin:/usr/local/openresty/bin
+
+# 配置 APT 归档源并安装运行阶段必备的运行时动态库（无需 dev 包）
+RUN set -eux; \
+    echo "deb http://${APT_MIRROR}/debian-archive/debian/ stretch main non-free contrib" > /etc/apt/sources.list; \
+    echo "deb http://${APT_MIRROR}/debian-archive/debian-security/ stretch/updates main non-free contrib" >> /etc/apt/sources.list; \
+    echo 'Acquire::Check-Valid-Until "false";' > /etc/apt/apt.conf.d/99no-check-valid-until; \
+    apt-get update && apt-get install -y --no-install-recommends --no-install-suggests \
+    ca-certificates \
+    curl \
+    gettext-base \
+    libgd3 \
+    libgeoip1 \
+    libmaxminddb0 \
+    mmdb-bin \
+    libpcre3 \
+    libssl1.1 \
+    zlib1g \
+    && rm -rf /var/lib/apt/lists/*
+
+# 从第一阶段完整复制 /usr/local/openresty 目录
+COPY --from=builder /usr/local/openresty /usr/local/openresty
+
+# 配置运行用户、日志目录及软链接
+RUN set -x \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo "$TZ" > /etc/timezone \
+    && getent group www || groupadd -g 1001 -r www \
+    && getent passwd www || useradd -u 1001 -s /usr/sbin/nologin -r -g www www \
+    && mkdir -p /var/log/nginx /usr/local/openresty/nginx/logs \
+    && ln -sf /usr/local/openresty/nginx/conf /etc/nginx \
+    && mkdir /etc/nginx/conf.d \
+    && ln -sf /dev/stdout /var/log/nginx/access.log \
+    && ln -sf /dev/stderr /var/log/nginx/error.log
+
+EXPOSE 80 443
+
+STOPSIGNAL SIGQUIT
+
+# 使用绝对路径启动
+CMD ["/usr/local/openresty/nginx/sbin/nginx", "-g", "daemon off;"]

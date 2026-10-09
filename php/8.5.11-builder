@@ -73,7 +73,7 @@ ENV LANG="en_US.UTF-8" \
     TZ="Asia/Shanghai" \
     APT_MIRROR="mirrors.ustc.edu.cn"
 
-# 1. 配置 Apt 源、时区与用户
+# 配置 Apt 源、时区与用户
 RUN set -eux; \
     if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
         sed -i "s/deb.debian.org/${APT_MIRROR}/g" /etc/apt/sources.list.d/debian.sources; \
@@ -86,7 +86,7 @@ RUN set -eux; \
     getent group www || groupadd -g 1001 -r www; \
     getent passwd www || useradd -u 1001 -r -g www www
 
-# 2. 仅安装基础运行时依赖
+# 仅安装基础运行时依赖
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
@@ -102,11 +102,17 @@ RUN set -eux; \
     unzip; \
     rm -rf /var/lib/apt/lists/*
 
-# 3. 完整复制 Builder 阶段编译出的 .so 文件和配置文件
+# 完整复制 Builder 阶段编译出的 .so 文件和配置文件
 COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
 COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
 
-# 4. 写入自定义的 OPcache 运行时配置
+# 修改 php-fpm 运行用户
+RUN { \
+        sed -i "s/user = www-data/user = www/g" /usr/local/etc/php-fpm.d/www.conf; \
+        sed -i "s/group = www-data/group = www/g" /usr/local/etc/php-fpm.d/www.conf; \
+    }
+
+# 写入自定义的 OPcache 运行时配置
 RUN { \
         echo "opcache.enable=1"; \
         echo "opcache.enable_cli=1"; \
