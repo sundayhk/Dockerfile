@@ -1,0 +1,121 @@
+# ==========================================
+# STAGE 1: Builder (编译阶段)
+# ==========================================
+FROM php:8.5.11-fpm-trixie AS builder
+
+ENV APT_MIRROR="mirrors.ustc.edu.cn"
+
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i "s/deb.debian.org/${APT_MIRROR}/g" /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+        sed -i "s/deb.debian.org/${APT_MIRROR}/g" /etc/apt/sources.list; \
+        sed -i "s/security.debian.org/${APT_MIRROR}/g" /etc/apt/sources.list; \
+    fi
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libfreetype6-dev \
+    libjpeg62-turbo-dev \
+    libpng-dev \
+    libwebp-dev \
+    libicu-dev \
+    libxml2-dev \
+    libssl-dev \
+    libcurl4-openssl-dev \
+    libreadline-dev \
+    libzip-dev \
+    zlib1g-dev \
+    unzip \
+    \
+    librabbitmq-dev \
+    imagemagick \
+    libmagickcore-dev \
+    libmagickwand-dev \
+    zbar-tools \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+ RUN docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp; \
+    docker-php-ext-install -j$(nproc) \
+        mysqli \
+        pdo_mysql \
+        bcmath \
+        shmop \
+        sysvsem \
+        ftp \
+        gd \
+        pcntl \
+        sockets \
+        zip \
+        soap \
+        gettext \
+        exif
+
+RUN set -eux; \
+    pecl install redis-6.3.0 \
+    amqp-2.2.0 \
+    xlswriter-3.0.0 \
+    imagick-3.8.1 \
+    && docker-php-ext-enable redis \
+    amqp \
+    xlswriter \
+    imagick \
+    && rm -rf /tmp/pear 
+
+
+# ==========================================
+# STAGE 2: Final Runtime (运行时阶段 - 省空间)
+# ==========================================
+FROM php:8.5.11-fpm-trixie
+
+ENV LANG="en_US.UTF-8" \
+    TZ="Asia/Shanghai" \
+    APT_MIRROR="mirrors.ustc.edu.cn"
+
+# 1. 配置 Apt 源、时区与用户
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i "s/deb.debian.org/${APT_MIRROR}/g" /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+        sed -i "s/deb.debian.org/${APT_MIRROR}/g" /etc/apt/sources.list; \
+        sed -i "s/security.debian.org/${APT_MIRROR}/g" /etc/apt/sources.list; \
+    fi; \
+    ln -snf /usr/share/zoneinfo/${TZ} /etc/localtime; \
+    echo "${TZ}" > /etc/timezone; \
+    getent group www || groupadd -g 1001 -r www; \
+    getent passwd www || useradd -u 1001 -r -g www www
+
+# 2. 仅安装基础运行时依赖
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+    libfreetype6 \
+    libjpeg62-turbo \
+    libpng16-16 \
+    libwebp7 \
+    libzip5 \
+    librabbitmq4 \
+    imagemagick \
+    zbar-tools \
+    procps \
+    unzip; \
+    rm -rf /var/lib/apt/lists/*
+
+# 3. 完整复制 Builder 阶段编译出的 .so 文件和配置文件
+COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
+
+# 4. 写入自定义的 OPcache 运行时配置
+RUN { \
+        echo "opcache.enable=1"; \
+        echo "opcache.enable_cli=1"; \
+        echo "opcache.memory_consumption=128"; \
+        echo "opcache.interned_strings_buffer=8"; \
+        echo "opcache.max_accelerated_files=10000"; \
+        echo "opcache.validate_timestamps=1"; \
+        echo "opcache.revalidate_freq=2"; \
+        echo "opcache.save_comments=1"; \
+        echo "opcache.file_cache=/tmp"; \
+        echo "opcache.huge_code_pages=1"; \
+    } > /usr/local/etc/php/conf.d/docker-php-ext-opcache.ini

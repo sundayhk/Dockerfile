@@ -139,7 +139,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmcrypt4 \
     libreadline7 \
     zlib1g \
-	\
+    \
+    procps
     librabbitmq4 \
     libmagickwand-6.q16-3 \
     libzbar0 \
