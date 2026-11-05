@@ -145,6 +145,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagickwand-6.q16-3 \
     libzbar0 \
     libv4l-0 \
+    ghostscript \
+    mediainfo \
+    #ffmpeg \
+    #lame \
     && rm -rf /var/lib/apt/lists/*
 
 # 从 builder 复制编译好的扩展与配置文件

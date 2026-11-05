@@ -1,0 +1,71 @@
+# 直接引入你已经独立编译好的 ffmpeg 基础镜像
+FROM ffmpeg:7.1.5-static AS ffmpeg_builder
+
+FROM php:8.5.12-fpm-manage
+
+ARG APT_MIRROR=mirrors.ustc.edu.cn
+
+ENV LANG="en_US.UTF-8" \
+    TZ=Asia/Shanghai \
+    APT_MIRROR="${APT_MIRROR}"
+
+RUN getent group www || groupadd -g 1001 www && \
+    id -u www >/dev/null 2>&1 || useradd -u 1001 -g www -m -s /bin/bash www
+
+# 配置软件源
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i "s/deb.debian.org/${APT_MIRROR}/g" /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+        echo "deb http://${APT_MIRROR}/debian trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+        echo "deb http://${APT_MIRROR}/debian trixie-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+        echo "deb http://${APT_MIRROR}/debian-security trixie-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list; \
+    fi
+
+# 1. 安装 32 位库（给 nero 用）、mediainfo、lame、音视频动态库及 Supervisor
+RUN dpkg --add-architecture i386 && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    # 32 位 Nero 运行库
+    libc6:i386 \
+    libstdc++6:i386 \
+    mediainfo \
+    lame \
+    ghostscript \
+    # Supervisor
+    python3-pip \
+    && pip3 install --no-cache-dir --break-system-packages supervisor \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# 安装 PHP 扩展
+RUN docker-php-ext-install -j$(nproc) \
+    mysqli \
+    pdo_mysql
+
+# 2. 创建日志及运行目录
+RUN mkdir -p /data/logs/queue /etc/supervisor/conf.d /var/run/supervisor \
+    && chown -R www:www /data/logs/queue /var/run/supervisor /etc/supervisor
+
+# 3. 复制 Nero 套件、Supervisor 配置、以及从基础镜像中提取 ffmpeg
+COPY nero /usr/local/nero
+COPY supervisord.conf /etc/supervisor/supervisord.conf
+# COPY docker/supervisor/copyright_audio_transcode-work.conf /etc/supervisor/conf.d/
+
+COPY --from=ffmpeg_builder /usr/local/ffmpeg /usr/local/ffmpeg
+
+# 4. 赋予权限并建立软链接
+RUN chmod +x /usr/local/nero/neroAacDec \
+    /usr/local/nero/neroAacEnc \
+    /usr/local/nero/neroAacTag \
+    /usr/local/ffmpeg/bin/ffmpeg \
+    /usr/local/ffmpeg/bin/ffprobe \
+    && ln -s /usr/local/nero/neroAacDec /usr/local/bin/ \
+    && ln -s /usr/local/nero/neroAacEnc /usr/local/bin/ \
+    && ln -s /usr/local/nero/neroAacTag /usr/local/bin/ \
+    && ln -s /usr/local/ffmpeg/bin/ffmpeg /usr/local/bin/ \
+    && ln -s /usr/local/ffmpeg/bin/ffprobe /usr/local/bin/
+
+WORKDIR /var/www/html
+
+# 5. 设置容器启动入口
+CMD ["supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
