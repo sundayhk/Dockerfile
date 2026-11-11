@@ -1,0 +1,96 @@
+FROM debian:trixie-slim AS builder
+
+ARG APT_MIRROR=mirrors.ustc.edu.cn
+
+# 1. 配置中科大源并开启 non-free
+RUN rm -f /etc/apt/sources.list.d/debian.sources && \
+    echo "deb http://$APT_MIRROR/debian trixie main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb http://$APT_MIRROR/debian trixie-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://$APT_MIRROR/debian-security trixie-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list
+
+# 2. 安装精简后的核心编译依赖（去掉了难以静态打包的 libass-dev 等）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    yasm \
+    nasm \
+    wget \
+    ca-certificates \
+    autoconf \
+    automake \
+    cmake \
+    libtool \
+    libfreetype6-dev \
+    libmp3lame-dev \
+    libx264-dev \
+    libx265-dev \
+    libvorbis-dev \
+    libvpx-dev \
+    libopus-dev
+
+# 2. 手动下载并静态编译安装 fdk-aac 源码
+RUN cd /tmp && \
+    wget https://ghfast.top/https://github.com/mstorsjo/fdk-aac/archive/refs/tags/v3.0.0.tar.gz -O fdk-aac.tar.gz && \
+    tar -xf fdk-aac.tar.gz && \
+    cd fdk-aac-* && \
+    autoreconf -fiv && \
+    ./configure --prefix=/usr/local/ffmpeg --enable-static --disable-shared && \
+    make -j$(nproc) && \
+    make install
+
+# 3. 手动下载并静态编译安装 x265 源码（通过 CMake 参数原生生成静态库与 pc 文件）
+RUN cd /tmp && \
+    wget https://ghfast.top/https://github.com/Multicorewareinc/x265/archive/refs/tags/4.3.tar.gz -O x265.tar.gz && \
+    tar -xf x265.tar.gz && \
+    cd x265-*/build/linux && \
+    cmake -G "Unix Makefiles" \
+        -DCMAKE_INSTALL_PREFIX=/usr/local/ffmpeg \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DENABLE_SHARED=OFF \
+        -DENABLE_CLI=OFF \
+        ../../source && \
+    make -j$(nproc) && \
+    make install && \
+    # 【核心修复】精确控制 x265.pc 的 Libs，剔除掉会导致找不到的 -lgcc_s 等底层干扰项
+    echo "prefix=/usr/local/ffmpeg" > /usr/local/ffmpeg/lib/pkgconfig/x265.pc && \
+    echo "exec_prefix=\${prefix}" >> /usr/local/ffmpeg/lib/pkgconfig/x265.pc && \
+    echo "libdir=\${prefix}/lib" >> /usr/local/ffmpeg/lib/pkgconfig/x265.pc && \
+    echo "includedir=\${prefix}/include" >> /usr/local/ffmpeg/lib/pkgconfig/x265.pc && \
+    echo "" >> /usr/local/ffmpeg/lib/pkgconfig/x265.pc && \
+    echo "Name: x265" >> /usr/local/ffmpeg/lib/pkgconfig/x265.pc && \
+    echo "Description: H.265/HEVC video encoder" >> /usr/local/ffmpeg/lib/pkgconfig/x265.pc && \
+    echo "Version: 4.3" >> /usr/local/ffmpeg/lib/pkgconfig/x265.pc && \
+    echo "Libs: -L\${libdir} -lx265 -lstdc++ -lm -lpthread -ldl" >> /usr/local/ffmpeg/lib/pkgconfig/x265.pc && \
+    echo "Cflags: -I\${includedir}" >> /usr/local/ffmpeg/lib/pkgconfig/x265.pc
+
+#COPY ffmpeg.tar.gz /tmp/
+# 3. 下载并编译 FFmpeg 7.1.5（移除未通过静态检查的参数）
+RUN cd /tmp && \
+    wget https://ghfast.top/https://github.com/FFmpeg/FFmpeg/archive/refs/tags/n7.1.5.tar.gz -O ffmpeg.tar.gz && \
+    tar -xf ffmpeg.tar.gz && \
+    cd FFmpeg-* && \
+    export PKG_CONFIG_PATH="/usr/local/ffmpeg/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig" && \
+    ./configure \
+        --prefix=/usr/local/ffmpeg \
+        --enable-gpl \
+        --enable-version3 \
+        --enable-nonfree \
+        --enable-postproc \
+        --enable-pthreads \
+        --enable-libfreetype \
+        --enable-libmp3lame \
+        --enable-libfdk-aac \
+        --enable-libx264 \
+        --enable-libx265 \
+        --enable-libvorbis \
+        --enable-libvpx \
+        --enable-libopus \
+        --pkg-config-flags="--static" \
+        --extra-cflags="-I/usr/local/ffmpeg/include" \
+        --extra-ldflags="-L/usr/local/ffmpeg/lib -static" && \
+    make -j$(nproc) && \
+    make install
+
+# 4. 导出制作成轻量级的静态 ffmpeg 基础镜像
+FROM scratch
+COPY --from=builder /usr/local/ffmpeg /usr/local/ffmpeg
